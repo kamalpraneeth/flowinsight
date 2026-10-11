@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
@@ -110,9 +111,9 @@ class FailureClassificationBundle:
     def _extract_supporting_lines(self, cause: str, lines: List[str]) -> List[str]:
         """Extract lines in raw log that provide supporting evidence for candidate cause."""
         keywords = {
-            "out_of_memory": ["mem", "oom", "allocation", "cgroup", "resident", "4194304"],
-            "timeout": ["timeout", "execution limit", "watchdog", "wallclock", "time-501"],
-            "missing_library": ["lib-204", "lib-901", "library", "lef", "cell", "unresolved"],
+            "out_of_memory": ["mem", "oom", "allocation", "cgroup", "resident", "4194304", "mem-101", "mem-902"],
+            "timeout": ["timeout", "execution limit", "watchdog", "wallclock", "time-501", "time-102"],
+            "missing_library": ["lib-204", "lib-901", "library", "lef", "cell", "unresolved", "lib-102"],
             "constraint_violation": [
                 "slack",
                 "tim-302",
@@ -120,10 +121,11 @@ class FailureClassificationBundle:
                 "violation",
                 "transition",
                 "sta-500",
+                "tim-104",
             ],
-            "license_error": ["flexlm", "lic-101", "lic-108", "license", "checkout"],
-            "syntax_error": ["syntax", "hdl-105", "parse-010", "unexpected token", "endmodule"],
-            "congestion": ["congestion", "rte-702", "cong-801", "gcell", "overflow", "pnr-880"],
+            "license_error": ["flexlm", "lic-101", "lic-108", "license", "checkout", "lic-105"],
+            "syntax_error": ["syntax", "hdl-105", "parse-010", "unexpected token", "endmodule", "hdl-102"],
+            "congestion": ["congestion", "rte-702", "cong-801", "gcell", "overflow", "pnr-880", "cong-102"],
         }
         kw_list = keywords.get(cause.lower(), [cause.lower()])
         matches: List[str] = []
@@ -142,17 +144,62 @@ def get_git_commit_hash() -> str:
         return "unknown-commit"
 
 
+def enrich_failed_df_with_logs(failed_df: pd.DataFrame, log_dir: Optional[str] = None) -> pd.DataFrame:
+    """Ensure failed_df contains parsed error_text and message_ids_str from log files."""
+    df_out = failed_df.copy()
+    has_text = "error_text" in df_out.columns and not (
+        df_out["error_text"].fillna("__none__").eq("__none__").all()
+    )
+    if has_text:
+        return df_out
+
+    candidate_dirs = [
+        log_dir,
+        "data/logs",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../data/logs"),
+    ]
+    valid_dir = None
+    for d in candidate_dirs:
+        if d and os.path.isdir(d):
+            valid_dir = d
+            break
+
+    if not valid_dir:
+        return df_out
+
+    error_texts: List[str] = []
+    msg_id_strs: List[str] = []
+    for _, row in df_out.iterrows():
+        job_id = row.get("job_id", "")
+        log_path = os.path.join(valid_dir, f"{job_id}.log")
+        if os.path.exists(log_path):
+            parsed = parse_log_file(log_path)
+            error_texts.append(parsed.raw_error_text or "__none__")
+            msg_id_strs.append(" ".join(parsed.raw_message_ids) or "__none__")
+        else:
+            error_texts.append("__none__")
+            msg_id_strs.append("__none__")
+
+    df_out["error_text"] = error_texts
+    df_out["message_ids_str"] = msg_id_strs
+    return df_out
+
+
 def train_failure_classifier(
     df: pd.DataFrame,
     model_type: str = "logistic_regression",
     seed: int = 42,
     output_dir: str = "models_saved",
+    log_dir: Optional[str] = None,
 ) -> Tuple[FailureClassificationBundle, Dict[str, Any]]:
     """Train failure classifier with stratified split, class-imbalance weights, cross-validation, and ablation."""
     # Filter to failed jobs with labeled failure_cause
     failed_df = df[df["status"] == "failed"].copy()
     if failed_df.empty:
         raise ValueError("No failed jobs available in dataset for training failure classifier.")
+
+    # Enrich from logs if error_text is missing or empty
+    failed_df = enrich_failed_df_with_logs(failed_df, log_dir=log_dir)
 
     classes = sorted(failed_df["failure_cause"].unique())
     y = failed_df["failure_cause"].to_numpy()
@@ -173,6 +220,17 @@ def train_failure_classifier(
     feature_pipeline = build_feature_pipeline(include_text=True, include_msg_ids=True)
     X_train = feature_pipeline.fit_transform(train_df)
     X_test = feature_pipeline.transform(test_df)
+
+    # Baselines: DummyClassifiers
+    dummy_mf = DummyClassifier(strategy="most_frequent")
+    dummy_mf.fit(X_train, y_train)
+    pred_mf = dummy_mf.predict(X_test)
+    f1_mf = float(f1_score(y_test, pred_mf, average="macro", zero_division=0))
+
+    dummy_strat = DummyClassifier(strategy="stratified", random_state=seed)
+    dummy_strat.fit(X_train, y_train)
+    pred_strat = dummy_strat.predict(X_test)
+    f1_strat = float(f1_score(y_test, pred_strat, average="macro", zero_division=0))
 
     # Cross-validation on train set
     _, train_class_counts = np.unique(y_train, return_counts=True)
@@ -221,7 +279,37 @@ def train_failure_classifier(
             "f1_score": round(float(per_class_f1[c_idx]), 4),
         }
 
-    # 2. Ablation: Model trained WITHOUT TF-IDF features
+    # Top-3 Ranking Recall
+    probas = classifier.predict_proba(X_test)
+    top3_hits = 0
+    per_class_top3_hits = {c: 0 for c in classes}
+    per_class_test_counts = {c: 0 for c in classes}
+    for i in range(len(y_test)):
+        true_c = y_test[i]
+        per_class_test_counts[true_c] += 1
+        top3_idx = np.argsort(probas[i])[::-1][:3]
+        top3_c = [classes[idx] for idx in top3_idx]
+        if true_c in top3_c:
+            top3_hits += 1
+            per_class_top3_hits[true_c] += 1
+
+    top3_recall_per_class = {
+        c: round(per_class_top3_hits[c] / max(1, per_class_test_counts[c]), 4)
+        for c in classes
+    }
+    top3_accuracy_overall = round(top3_hits / max(1, len(y_test)), 4)
+
+    # Comparison baseline: RandomForest vs Logistic Regression
+    rf_comparison = RandomForestClassifier(
+        n_estimators=100, class_weight="balanced", max_depth=10, random_state=seed
+    )
+    rf_comparison.fit(X_train, y_train)
+    rf_pred = rf_comparison.predict(X_test)
+    rf_macro_f1 = float(f1_score(y_test, rf_pred, average="macro", zero_division=0))
+    rf_p = precision_score(y_test, rf_pred, labels=classes, average=None, zero_division=0)
+    rf_r = recall_score(y_test, rf_pred, labels=classes, average=None, zero_division=0)
+
+    # 2. Ablation: Model trained WITHOUT TF-IDF and message ID features
     ablation_pipeline = build_feature_pipeline(include_text=False, include_msg_ids=False)
     X_train_abl = ablation_pipeline.fit_transform(train_df)
     X_test_abl = ablation_pipeline.transform(test_df)
@@ -229,15 +317,7 @@ def train_failure_classifier(
     ablation_clf = LogisticRegression(class_weight="balanced", max_iter=500, random_state=seed)
     ablation_clf.fit(X_train_abl, y_train)
     y_pred_abl = ablation_clf.predict(X_test_abl)
-    ablation_macro_f1 = float(f1_score(y_test, y_pred_abl, average="macro"))
-
-    # Comparison baseline: RandomForest vs Logistic Regression
-    rf_comparison = RandomForestClassifier(
-        n_estimators=60, class_weight="balanced", max_depth=6, random_state=seed
-    )
-    rf_comparison.fit(X_train, y_train)
-    rf_pred = rf_comparison.predict(X_test)
-    rf_macro_f1 = float(f1_score(y_test, rf_pred, average="macro"))
+    ablation_macro_f1 = float(f1_score(y_test, y_pred_abl, average="macro", zero_division=0))
 
     metrics = {
         "macro_f1": round(macro_f1, 4),
@@ -248,7 +328,19 @@ def train_failure_classifier(
             "classes": classes,
             "matrix": cm,
         },
-        "baseline_random_forest_f1": round(rf_macro_f1, 4),
+        "dummy_baselines": {
+            "most_frequent_f1": round(f1_mf, 4),
+            "stratified_f1": round(f1_strat, 4),
+        },
+        "baseline_random_forest": {
+            "macro_f1": round(rf_macro_f1, 4),
+            "per_class_precision": {c: round(float(rf_p[idx]), 4) for idx, c in enumerate(classes)},
+            "per_class_recall": {c: round(float(rf_r[idx]), 4) for idx, c in enumerate(classes)},
+        },
+        "top3_ranking": {
+            "overall_top3_accuracy": top3_accuracy_overall,
+            "per_class_top3_recall": top3_recall_per_class,
+        },
         "ablation_without_tfidf": {
             "macro_f1": round(ablation_macro_f1, 4),
             "delta_f1": round(macro_f1 - ablation_macro_f1, 4),

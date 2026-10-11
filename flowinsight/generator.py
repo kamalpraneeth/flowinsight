@@ -12,7 +12,9 @@ import os
 import random
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+from flowinsight.parsers import parse_log_file
 
 
 @dataclass
@@ -34,6 +36,8 @@ class JobRecord:
     anomaly_type: str
     is_truncated: int
     data_source: str = "synthetic"
+    error_text: str = ""
+    message_ids_str: str = ""
 
 
 # Design pool
@@ -75,9 +79,22 @@ TARGET_MULTIPLIERS = {"area": 0.95, "power": 1.05, "timing": 1.20}
 class SyntheticDataGenerator:
     """Generates synthetic EDA tool execution runs, text logs, and manifests."""
 
-    def __init__(self, seed: int = 42) -> None:
+    def __init__(
+        self,
+        seed: int = 42,
+        enable_noise: bool = True,
+        enable_truncation: bool = True,
+        enable_ambiguity: bool = True,
+        truncation_rate: float = 0.15,
+        ambiguity_rate: float = 0.05,
+    ) -> None:
         self.seed = seed
         self.rng = random.Random(seed)
+        self.enable_noise = enable_noise
+        self.enable_truncation = enable_truncation
+        self.enable_ambiguity = enable_ambiguity
+        self.truncation_rate = truncation_rate
+        self.ambiguity_rate = ambiguity_rate
 
     def generate_dataset(
         self,
@@ -101,13 +118,17 @@ class SyntheticDataGenerator:
                 seconds=self.rng.randint(0, 59),
             )
             job = self._generate_single_job(i, job_time)
-            jobs.append(job)
 
             if write_logs:
                 log_content = self._generate_log_content(job)
                 log_path = os.path.join(output_dir, "logs", f"{job.job_id}.log")
                 with open(log_path, "w", encoding="utf-8") as f:
                     f.write(log_content)
+                parsed = parse_log_file(log_path)
+                job.error_text = parsed.raw_error_text
+                job.message_ids_str = " ".join(parsed.raw_message_ids)
+
+            jobs.append(job)
 
         # Write manifest CSV
         fieldnames = list(asdict(jobs[0]).keys())
@@ -179,13 +200,17 @@ class SyntheticDataGenerator:
             base_memory = 600.0 + 310.0 * (norm_size**0.98) * (1.0 + 0.02 * threads)
 
         # Stochastic noise
-        noise_factor = math.exp(self.rng.gauss(0.0, 0.12))
-        runtime_s = max(15.0, round(base_runtime * noise_factor, 2))
-        mem_noise = self.rng.gauss(0.0, 65.0)
-        peak_memory_mb = max(250.0, round(base_memory + mem_noise, 1))
+        if self.enable_noise:
+            noise_factor = math.exp(self.rng.gauss(0.0, 0.12))
+            mem_noise = self.rng.gauss(0.0, 65.0)
+            warnings_count = max(0, int(self.rng.gauss(14.0 + norm_size * 2.5, 6.0)))
+        else:
+            noise_factor = 1.0
+            mem_noise = 0.0
+            warnings_count = max(0, int(14.0 + norm_size * 2.5))
 
-        # Warning counts
-        warnings_count = max(0, int(self.rng.gauss(14.0 + norm_size * 2.5, 6.0)))
+        runtime_s = max(15.0, round(base_runtime * noise_factor, 2))
+        peak_memory_mb = max(250.0, round(base_memory + mem_noise, 1))
         errors_count = 0 if not is_failed else self.rng.randint(1, 5)
 
         # Adjustments by failure cause
@@ -214,7 +239,11 @@ class SyntheticDataGenerator:
             anomaly_type = "warning_storm"
             warnings_count += self.rng.randint(220, 550)
 
-        is_truncated = 1 if (is_failed and self.rng.random() < 0.18) else 0
+        is_truncated = (
+            1
+            if (self.enable_truncation and is_failed and self.rng.random() < self.truncation_rate)
+            else 0
+        )
         status = "failed" if is_failed else "completed"
 
         return JobRecord(
@@ -266,6 +295,17 @@ class SyntheticDataGenerator:
             steps = ["ENV_SETUP", "COMPILE_TB", "ELABORATE", "SIMULATION_INIT", "EXECUTE_VECTORS"]
 
         total_steps = len(steps)
+        has_precursor = False
+        is_ambiguous = False
+        if job.status == "failed":
+            if self.enable_ambiguity and (self.rng.random() < self.ambiguity_rate):
+                is_ambiguous = True
+            elif job.is_truncated == 1:
+                # 60% of truncated failed jobs retain precursor evidence; 40% are clean cut evidence-free
+                has_precursor = self.rng.random() < 0.60
+            else:
+                has_precursor = True
+
         if job.status == "failed":
             if job.failure_cause in ("syntax_error", "missing_library", "license_error"):
                 cutoff_step = self.rng.randint(1, min(3, total_steps))
@@ -342,26 +382,46 @@ class SyntheticDataGenerator:
                     )
                 lines.append("   >>> REPEATED WARNING CASCADE SUPPRESSED <<<")
 
+            # Precursor warning injection on the final active step for failing jobs
+            if job.status == "failed" and idx == len(active_steps):
+                if is_ambiguous:
+                    lines.append(
+                        "   [WARN] [GEN-002] Diagnostic execution anomaly detected in worker thread."
+                    )
+                elif has_precursor:
+                    lines.extend(self._get_precursor_warning_lines(job.failure_cause))
+
             lines.append(
                 f"   [STEP {idx} TIMING] CPU: {elapsed_cum * 1.8:.1f}s | Wall: {elapsed_cum:.1f}s | Mem: {mem_cum:.1f}MB"
             )
             lines.append(f">> [STEP {idx}/{total_steps}] FINISHED: {step_name}")
             lines.append("")
 
+        active_steps_end_idx = len(lines)
+
         # Failure injection
         if job.status == "failed":
             lines.append("=" * 80)
             lines.append("FATAL TERMINATION ENCOUNTERED")
             lines.append("=" * 80)
-            cause_lines = self._get_failure_log_lines(
-                job.failure_cause, job.design_name, job.peak_memory_mb, config
-            )
-            lines.extend(cause_lines)
+            if is_ambiguous:
+                lines.append("ERROR: [GEN-001] Unspecified fatal tool error during execution.")
+                lines.append(
+                    "FATAL: [GEN-002] Solver process terminated abnormally with generic error."
+                )
+            else:
+                cause_lines = self._get_failure_log_lines(
+                    job.failure_cause, job.design_name, job.peak_memory_mb, config
+                )
+                lines.extend(cause_lines)
             lines.append("")
 
         # Truncation check
         if job.is_truncated == 1:
-            cut_idx = max(5, int(len(lines) * self.rng.uniform(0.65, 0.85)))
+            if has_precursor:
+                cut_idx = active_steps_end_idx
+            else:
+                cut_idx = max(8, int(active_steps_end_idx * self.rng.uniform(0.45, 0.70)))
             truncated_lines = lines[:cut_idx]
             truncated_lines.append(
                 "... [LOG STREAM TRUNCATED BY HOST AGENT / SUDDEN PROCESS TERMINATION] ..."
@@ -491,10 +551,56 @@ class SyntheticDataGenerator:
 
         return evidence
 
+    def _get_precursor_warning_lines(self, cause: str) -> List[str]:
+        """Precursor diagnostic warnings emitted in execution steps before failure."""
+        if cause == "out_of_memory":
+            return [
+                "   [WARN] [MEM-101] Host memory utilization critical: node resident set size climbing past 85% limit."
+            ]
+        elif cause == "timeout":
+            return [
+                "   [WARN] [TIME-102] Execution step convergence rate sub-nominal: wallclock pacing watchdog alert."
+            ]
+        elif cause == "missing_library":
+            return [
+                "   [WARN] [LIB-102] Target technology cell resolution warning in macro binding pass."
+            ]
+        elif cause == "constraint_violation":
+            return [
+                "   [WARN] [TIM-104] Critical path setup timing margin degradation observed."
+            ]
+        elif cause == "license_error":
+            return [
+                "   [WARN] [LIC-105] Tool license heartbeat verification delayed: scheduling retry attempt."
+            ]
+        elif cause == "syntax_error":
+            return [
+                "   [WARN] [HDL-102] Parse syntax irregularity encountered in module elaboration."
+            ]
+        elif cause == "congestion":
+            return [
+                "   [WARN] [CONG-102] Routing cell density congestion warning: global routing hotspot tile."
+            ]
+        return ["   [WARN] [GEN-002] Generic system diagnostic warning in thread worker."]
+
 
 def generate_synthetic_data(
-    num_jobs: int = 5000, seed: int = 42, output_dir: str = "data"
+    num_jobs: int = 5000,
+    seed: int = 42,
+    output_dir: str = "data",
+    enable_noise: bool = True,
+    enable_truncation: bool = True,
+    enable_ambiguity: bool = True,
+    truncation_rate: float = 0.15,
+    ambiguity_rate: float = 0.05,
 ) -> List[JobRecord]:
     """Helper entry point for CLI and tests."""
-    generator = SyntheticDataGenerator(seed=seed)
+    generator = SyntheticDataGenerator(
+        seed=seed,
+        enable_noise=enable_noise,
+        enable_truncation=enable_truncation,
+        enable_ambiguity=enable_ambiguity,
+        truncation_rate=truncation_rate,
+        ambiguity_rate=ambiguity_rate,
+    )
     return generator.generate_dataset(num_jobs=num_jobs, output_dir=output_dir, write_logs=True)

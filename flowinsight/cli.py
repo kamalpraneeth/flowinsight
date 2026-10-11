@@ -83,7 +83,10 @@ def handle_train(args: argparse.Namespace) -> int:
     train_runtime_regressor(df, target_col="runtime_s", seed=args.seed, output_dir=args.output_dir)
 
     print("Training Failure Classifier & Root Cause Ranker...")
-    train_failure_classifier(df, seed=args.seed, output_dir=args.output_dir)
+    log_dir_candidate = os.path.join(os.path.dirname(manifest_path), "logs")
+    train_failure_classifier(
+        df, seed=args.seed, output_dir=args.output_dir, log_dir=log_dir_candidate
+    )
 
     print("Training Anomaly Detectors (Isolation Forest vs Robust MAD)...")
     train_anomaly_detectors(df, seed=args.seed, output_dir=args.output_dir)

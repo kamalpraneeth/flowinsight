@@ -130,42 +130,47 @@ All figures below are extracted verbatim from `models_saved/*_metadata.json` gen
 ---
 
 ### 3.2 Failure Classification & Root-Cause Ranker (`models_saved/failure_metadata.json`)
-- **Dataset Size**: 1,149 failed jobs out of 5,000 (22.98% failure rate)
-- **Split Method**: Stratified 75/25 split by failure cause (Train: 861 jobs, Test: 288 jobs)
+- **Dataset Size**: 1,113 failed jobs out of 5,000 (22.26% failure rate)
+- **Split Method**: Stratified 75/25 split by failure cause (Train: 834 jobs, Test: 279 jobs)
 - **Class-Imbalance Handling**: `class_weight='balanced'`
 - **Model Type**: Multi-class `LogisticRegression` with CountVectorizer & TF-IDF text features
 
 #### Primary Evaluation & Baselines
-- **Macro $F_1$ Score**: **0.1743**
-- **3-Fold Cross-Validation $F_1$ (Train Set)**: Mean: **0.1542**, Std: **0.0093**
-- **Comparison Baseline (RandomForest Classifier)**: Macro $F_1$: **0.1253**
-- **Ablation Study (Without TF-IDF / Message IDs)**: Macro $F_1$: **0.1742** ($\Delta F_1 = +0.0001$)
+- **Macro $F_1$ Score**: **0.9031**
+- **3-Fold Cross-Validation $F_1$ (Train Set)**: Mean: **0.8931**, Std: **0.0066**
+- **Baseline 1 (DummyClassifier most_frequent)**: Macro $F_1$: **0.0434**
+- **Baseline 2 (DummyClassifier stratified)**: Macro $F_1$: **0.0790**
+- **Comparison Baseline (RandomForest Classifier)**: Macro $F_1$: **0.9079**
+- **Ablation Study (Without TF-IDF / Message IDs)**: Macro $F_1$: **0.1471** ($\Delta F_1 = \mathbf{+0.7560}$, showing massive text feature lift)
 
 #### Per-Class Performance Breakdown
-| Failure Category | Test Samples | Precision | Recall | $F_1$ Score |
-|---|---|---|---|---|
-| `congestion` | 14 | 0.1618 | **0.7857** | **0.2683** |
-| `constraint_violation` | 44 | 0.0652 | 0.0682 | 0.0667 |
-| `license_error` | 44 | 0.2308 | 0.0682 | 0.1053 |
-| `missing_library` | 45 | 0.1509 | 0.1778 | 0.1633 |
-| `out_of_memory` | 44 | **0.2826** | 0.2955 | **0.2889** |
-| `syntax_error` | 45 | 0.1429 | 0.1111 | 0.1250 |
-| `timeout` | 52 | **0.2963** | 0.1538 | 0.2025 |
+| Failure Category | Test Samples | Precision | Recall | $F_1$ Score | Top-3 Recall |
+|---|---|---|---|---|---|
+| `congestion` | 16 | 0.9286 | 0.8125 | 0.8667 | **87.50%** |
+| `constraint_violation` | 45 | 0.9149 | 0.9556 | 0.9348 | **100.00%** |
+| `license_error` | 37 | 0.8947 | 0.9189 | 0.9067 | **94.59%** |
+| `missing_library` | 50 | 0.8333 | 0.9000 | 0.8654 | **100.00%** |
+| `out_of_memory` | 39 | 0.9429 | 0.8462 | 0.8919 | **92.31%** |
+| `syntax_error` | 46 | 0.9302 | 0.8696 | 0.8989 | **97.83%** |
+| `timeout` | 46 | 0.9375 | 0.9783 | 0.9574 | **97.83%** |
+| **Macro Average / Overall** | **279** | **0.9117** | **0.8973** | **0.9031** | **96.77% Top-3 Acc** |
 
 #### Confusion Matrix (True Class $\times$ Predicted Class)
 Classes: `[congestion, constraint_violation, license_error, missing_library, out_of_memory, syntax_error, timeout]`
 ```text
-[[11,  1,  1,  1,  0,  0,  0],  <- congestion
- [12,  3,  2, 13,  5,  8,  1],  <- constraint_violation
- [ 8,  8,  3,  5,  9,  8,  3],  <- license_error
- [ 9, 10,  2,  8,  3,  8,  5],  <- missing_library
- [ 6,  8,  0,  7, 13,  3,  7],  <- out_of_memory
- [12,  8,  2, 10,  5,  5,  3],  <- syntax_error
- [10,  8,  3,  9, 11,  3,  8]]  <- timeout
+                    cong  viol  lic   lib   oom   syn   time
+congestion           13     0     0     1     1     0     1
+constraint_violation  0    43     0     1     0     1     0
+license_error         0     1    34     2     0     0     0
+missing_library       1     2     1    45     0     1     0
+out_of_memory         0     1     1     3    33     1     0
+syntax_error          0     0     2     2     0    40     2
+timeout               0     0     0     0     1     0    45
 ```
 
-**Root-Cause Ranker Heap Complexity**:
-Extracting top $k=3$ causes across $C=7$ classes uses a min-heap with time complexity $\mathcal{O}(C \log k) = \mathcal{O}(7 \log 3)$, requiring fewer comparisons than a full sort $\mathcal{O}(C \log C)$.
+**Root-Cause Ranker Heap Complexity & Accuracy**:
+- **Overall Top-3 Accuracy**: **0.9677** (270 / 279 true failure causes placed in top-3 recommendations).
+- Extracting top $k=3$ causes across $C=7$ classes uses a min-heap with time complexity $\mathcal{O}(C \log k) = \mathcal{O}(7 \log 3)$, requiring fewer comparisons than a full sort $\mathcal{O}(C \log C)$.
 
 ---
 
@@ -189,11 +194,21 @@ Extracting top $k=3$ causes across $C=7$ classes uses a min-heap with time compl
 
 In accordance with Rule 6 ("If something fails, fix the root cause; never weaken a test to make it pass"):
 
-1. **Unfitted Ensemble Estimator Truthiness Check (`runtime.py`)**:
+1. **Failure Classifier Near-Chance Performance & Training Disconnect (Detailed in `docs/FINDINGS.md`)**:
+   - *Investigation*: An investigation of the initial 0.1743 Macro F1 revealed two bugs:
+     a) `flowinsight train` was passing `manifest.csv`, which lacked `error_text` and `message_ids_str`. The feature pipeline defaulted both to `"__none__"`, causing TF-IDF to vectorize a dummy token with zero variance and forcing the model to guess failure causes from irrelevant hardware metadata.
+     b) In `generator.py`, truncation was placed after fatal error injection, which sliced off 100% of failure error lines for all truncated runs.
+   - *Resolution*:
+     a) Enriched `JobRecord` with parsed `error_text` and `message_ids_str` directly in `manifest.csv`.
+     b) Added fallback auto-enrichment in `train_failure_classifier` to parse logs from the log directory if manifest text columns are missing.
+     c) Added step precursor warnings (`MEM-101`, `TIME-102`, `LIC-105`, etc.) so that truncated runs retain early diagnostic telemetry while reserving a documented 6.0% for clean-cut evidence-free runs and 5.0% for ambiguous terminations.
+   - *Result*: Macro F1 improved from 0.1743 to **0.9031**, ablation demonstrated a **+0.7560** drop without text, and Top-3 root-cause ranking reached **96.77% accuracy**.
+
+2. **Unfitted Ensemble Estimator Truthiness Check (`runtime.py`)**:
    - *Issue*: In Python, `if q_low and q_high:` invoked `bool(q_low)`, which calls `BaseEnsemble.__len__` (`len(self.estimators_)`). Because `q_low` was not yet fitted, it threw `AttributeError: 'GradientBoostingRegressor' object has no attribute 'estimators_'`.
    - *Fix*: Changed to explicit identity check `if q_low is not None and q_high is not None:`.
 
-2. **Stratified Split Minimum Class Count (`failure.py`)**:
+3. **Stratified Split Minimum Class Count (`failure.py`)**:
    - *Issue*: In small smoke batches (e.g. 120 jobs with ~25 failures), rare classes like `missing_library` occasionally had only 1 member, causing scikit-learn's `train_test_split(stratify=y)` and `StratifiedKFold` to throw `ValueError: The least populated classes in y have only 1 member`.
    - *Fix*: Added dynamic `can_stratify = int(np.min(class_counts)) >= 2` guard; falls back to standard `KFold` when counts are below 3, while preserving stratified splitting on standard datasets.
 
