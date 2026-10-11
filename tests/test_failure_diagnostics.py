@@ -97,3 +97,49 @@ def test_failure_ablation_runs_and_shows_signal(tmp_path):
     ablation = meta["metrics"]["ablation_without_tfidf"]
     delta_f1 = ablation["delta_f1"]
     assert delta_f1 >= 0.30, f"Ablation delta F1 {delta_f1} is too small (< 0.30), text features must carry signal!"
+
+
+def test_feature_text_contains_no_labels(tmp_path):
+    """Ensure feature text (error_text and message_ids_str) never contains true cause names or labels."""
+    gen = SyntheticDataGenerator(seed=42, enable_truncation=True, enable_ambiguity=True)
+    output_dir = str(tmp_path / "data_leak_check")
+    gen.generate_dataset(num_jobs=250, output_dir=output_dir, write_logs=True)
+
+    df = pd.read_csv(os.path.join(output_dir, "manifest.csv"))
+    failed_df = df[df["status"] == "failed"]
+    assert len(failed_df) > 0, "Expected failed jobs in dataset"
+
+    cause_names = [
+        "out_of_memory",
+        "timeout",
+        "missing_library",
+        "constraint_violation",
+        "license_error",
+        "syntax_error",
+        "congestion",
+    ]
+
+    leaking_jobs = []
+    for _, row in failed_df.iterrows():
+        job_id = row["job_id"]
+        true_cause = row["failure_cause"]
+        err_text = str(row.get("error_text", "")).lower()
+        msg_ids = str(row.get("message_ids_str", "")).lower()
+
+        # Check for literal cause names
+        leaks = [c for c in cause_names if c in err_text or c in msg_ids]
+        if leaks:
+            leaking_jobs.append((job_id, true_cause, leaks, "cause_name"))
+
+        # Check for failure_cause literal token
+        if "failure_cause" in err_text or "failure_cause" in msg_ids:
+            leaking_jobs.append((job_id, true_cause, ["failure_cause"], "failure_cause_token"))
+
+        # Check for execution summary line carrying the label
+        if "primary failure code" in err_text or "execution summary" in err_text:
+            leaking_jobs.append((job_id, true_cause, ["execution summary header"], "summary_line"))
+
+    assert (
+        len(leaking_jobs) == 0
+    ), f"Feature leakage detected in {len(leaking_jobs)} failed jobs: {leaking_jobs[:5]}"
+

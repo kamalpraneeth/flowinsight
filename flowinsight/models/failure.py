@@ -111,9 +111,9 @@ class FailureClassificationBundle:
     def _extract_supporting_lines(self, cause: str, lines: List[str]) -> List[str]:
         """Extract lines in raw log that provide supporting evidence for candidate cause."""
         keywords = {
-            "out_of_memory": ["mem", "oom", "allocation", "cgroup", "resident", "4194304", "mem-101", "mem-902"],
-            "timeout": ["timeout", "execution limit", "watchdog", "wallclock", "time-501", "time-102"],
-            "missing_library": ["lib-204", "lib-901", "library", "lef", "cell", "unresolved", "lib-102"],
+            "out_of_memory": ["mem", "oom", "allocation", "cgroup", "resident", "4194304", "mem-101", "mem-902", "sys-mem-99"],
+            "timeout": ["timeout", "execution limit", "watchdog", "wallclock", "time-501", "time-102", "sys-004"],
+            "missing_library": ["lib-204", "lib-901", "library", "lef", "cell", "unresolved", "lib-102", "db-301"],
             "constraint_violation": [
                 "slack",
                 "tim-302",
@@ -123,9 +123,9 @@ class FailureClassificationBundle:
                 "sta-500",
                 "tim-104",
             ],
-            "license_error": ["flexlm", "lic-101", "lic-108", "license", "checkout", "lic-105"],
-            "syntax_error": ["syntax", "hdl-105", "parse-010", "unexpected token", "endmodule", "hdl-102"],
-            "congestion": ["congestion", "rte-702", "cong-801", "gcell", "overflow", "pnr-880", "cong-102"],
+            "license_error": ["flexlm", "lic-101", "lic-108", "license", "checkout", "lic-105", "lic-999"],
+            "syntax_error": ["syntax", "grammar", "hdl-105", "parse-010", "unexpected token", "endmodule", "hdl-102"],
+            "congestion": ["congestion", "density", "routability", "rte-702", "cong-801", "gcell", "overflow", "pnr-880", "cong-102"],
         }
         kw_list = keywords.get(cause.lower(), [cause.lower()])
         matches: List[str] = []

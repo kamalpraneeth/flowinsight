@@ -45,9 +45,8 @@ htmlcov/
 .ruff_cache/
 
 # Generated logs & model artifacts (can be recreated or trained)
-data/logs/*.log
-data/logs/*.txt
-data/manifest.csv
+data/
+reports/
 models_saved/
 artifacts/
 

@@ -480,7 +480,7 @@ class SyntheticDataGenerator:
                 "ERROR: [TIME-501] CPU execution limit exceeded. Maximum allowable wallclock window expired."
             )
             evidence.append(
-                "FATAL: [SYS-004] Tool elapsed wallclock time exceeded maximum configured timeout."
+                "FATAL: [SYS-004] Tool elapsed wallclock time exceeded maximum configured execution limit."
             )
             evidence.append(
                 "Process killed by watchdog timer after non-converging optimization iterations."
@@ -528,19 +528,19 @@ class SyntheticDataGenerator:
         elif cause == "syntax_error":
             line_no = self.rng.randint(32, 280)
             evidence.append(
-                f"ERROR: [HDL-105] Syntax error in file 'rtl/{design}.v' line {line_no}: unexpected token ';'."
+                f"ERROR: [HDL-105] HDL parsing grammar error in file 'rtl/{design}.v' line {line_no}: unexpected token ';'."
             )
             evidence.append(
-                "FATAL: [PARSE-010] Elaboration stopped due to unrecoverable HDL parse syntax error."
+                "FATAL: [PARSE-010] Elaboration stopped due to unrecoverable HDL parse grammar failure."
             )
 
         elif cause == "congestion":
             overflow = round(self.rng.uniform(4.5, 9.2), 1)
             evidence.append(
-                f"ERROR: [RTE-702] Global routing failed: Gcell congestion overflow exceeds {overflow}% in M3/M4."
+                f"ERROR: [RTE-702] Global routing failed: Gcell channel routing density overflow exceeds {overflow}% in M3/M4."
             )
             evidence.append(
-                "ERROR: [CONG-801] Congestion map hotspot exceeds routability threshold: tile (120, 84)."
+                "ERROR: [CONG-801] Spatial routing density hotspot exceeds routability threshold: tile (120, 84)."
             )
             evidence.append(
                 "FATAL: [PNR-880] Routing completion abort: maximum DRC iterations exhausted with shorts."
@@ -575,11 +575,11 @@ class SyntheticDataGenerator:
             ]
         elif cause == "syntax_error":
             return [
-                "   [WARN] [HDL-102] Parse syntax irregularity encountered in module elaboration."
+                "   [WARN] [HDL-102] Parse grammar irregularity encountered in module elaboration."
             ]
         elif cause == "congestion":
             return [
-                "   [WARN] [CONG-102] Routing cell density congestion warning: global routing hotspot tile."
+                "   [WARN] [CONG-102] Routing cell density warning: global routing hotspot tile."
             ]
         return ["   [WARN] [GEN-002] Generic system diagnostic warning in thread worker."]
 

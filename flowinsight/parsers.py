@@ -290,13 +290,13 @@ class LogParser(ABC):
                 kw = "GEN"
                 if "mem" in txt.lower() or "cgroup" in txt.lower():
                     kw = "MEM-RAW"
-                elif "timeout" in txt.lower() or "watchdog" in txt.lower():
+                elif "timeout" in txt.lower() or "watchdog" in txt.lower() or "wallclock" in txt.lower():
                     kw = "TIME-RAW"
-                elif "syntax" in txt.lower() or "token" in txt.lower():
+                elif "syntax" in txt.lower() or "token" in txt.lower() or "grammar" in txt.lower():
                     kw = "HDL-RAW"
                 elif "licen" in txt.lower():
                     kw = "LIC-RAW"
-                elif "congest" in txt.lower():
+                elif "congest" in txt.lower() or "density" in txt.lower() or "routability" in txt.lower():
                     kw = "CONG-RAW"
                 elif "slack" in txt.lower() or "transition" in txt.lower():
                     kw = "TIM-RAW"
