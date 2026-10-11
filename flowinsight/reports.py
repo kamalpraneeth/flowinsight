@@ -85,7 +85,7 @@ def plot_anomaly_timeline(df: pd.DataFrame, output_path: str) -> str:
 
     df_work = df.copy()
     if not pd.api.types.is_datetime64_any_dtype(df_work["start_time"]):
-        df_work["start_time"] = pd.to_datetime(df_work["start_time"])
+        df_work["start_time"] = pd.to_datetime(df_work["start_time"], format="ISO8601")
     df_sorted = df_work.sort_values("start_time")
 
     normal = df_sorted[df_sorted["is_anomaly"] == 0]
