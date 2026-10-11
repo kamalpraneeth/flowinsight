@@ -168,15 +168,11 @@ class SyntheticDataGenerator:
         target_mult = TARGET_MULTIPLIERS[target]
 
         if stage == "synthesis":
-            base_runtime = (
-                120.0 * (norm_size**1.15) * effort_mult * target_mult * (threads**-0.55)
-            )
+            base_runtime = 120.0 * (norm_size**1.15) * effort_mult * target_mult * (threads**-0.55)
             base_memory = 800.0 + 420.0 * (norm_size**1.05) * (1.0 + 0.03 * threads)
         elif stage == "place_and_route":
             layer_mult = 1.0 + 0.05 * (layers - 4)
-            base_runtime = (
-                280.0 * (norm_size**1.35) * effort_mult * layer_mult * (threads**-0.45)
-            )
+            base_runtime = 280.0 * (norm_size**1.35) * effort_mult * layer_mult * (threads**-0.45)
             base_memory = 950.0 + 720.0 * (norm_size**1.12) * (1.0 + 0.04 * threads)
         else:  # verification
             base_runtime = 90.0 * (norm_size**1.05) * effort_mult * (threads**-0.35)
@@ -304,13 +300,17 @@ class SyntheticDataGenerator:
                     t_str = f"{job.start_time[:10]}T12:{idx:02d}:00"
                     lines.append(f"   [{t_str}] [INFO] [CORE-100] Parallel workers active: {th}")
                 elif is_legacy:
-                    lines.append(f"   **INFO: (TOOL-SYS-04) Thread affinity mapped across {th} cores.")
+                    lines.append(
+                        f"   **INFO: (TOOL-SYS-04) Thread affinity mapped across {th} cores."
+                    )
                 else:
                     lines.append("   [SYS-001] Dispatched worker thread pool on local node")
 
             # Unknown message types occasionally
             if self.rng.random() < 0.15:
-                lines.append("   Tcl Script Note: User constraint override detected in config hook.")
+                lines.append(
+                    "   Tcl Script Note: User constraint override detected in config hook."
+                )
             if self.rng.random() < 0.10:
                 lines.append("   **DIAG-NOTICE** Internal cache utilization index: 94.2%")
 
@@ -320,11 +320,17 @@ class SyntheticDataGenerator:
                 w_id = self.rng.choice(["TIM-104", "DRC-201", "LIB-102", "PIN-040", "ENV-011"])
                 r_num = self.rng.randint(1, 64)
                 if is_modern:
-                    lines.append(f"   [WARN] [{w_id}] Non-critical timing margin degradation net_{r_num}")
+                    lines.append(
+                        f"   [WARN] [{w_id}] Non-critical timing margin degradation net_{r_num}"
+                    )
                 elif is_legacy:
-                    lines.append(f"   **WARNING: ({w_id}) Minor slew transition slack below margin U{r_num}")
+                    lines.append(
+                        f"   **WARNING: ({w_id}) Minor slew transition slack below margin U{r_num}"
+                    )
                 else:
-                    lines.append(f"   [WARNING:{w_id}] Fanout exceeds threshold for buffer inst_buf_{r_num}")
+                    lines.append(
+                        f"   [WARNING:{w_id}] Fanout exceeds threshold for buffer inst_buf_{r_num}"
+                    )
 
             # Warning storm anomaly handling
             if job.anomaly_type == "warning_storm" and idx == len(active_steps):
@@ -332,12 +338,12 @@ class SyntheticDataGenerator:
                 lines.append("   >>> REPEATED WARNING CASCADE COMMENCING <<<")
                 for storm_idx in range(min(120, job.warnings_count)):
                     lines.append(
-                        f"   [WARNING:DRC-STORM-99] Geometric grid spacing violation at ({storm_idx*10}, {storm_idx*15})"
+                        f"   [WARNING:DRC-STORM-99] Geometric grid spacing violation at ({storm_idx * 10}, {storm_idx * 15})"
                     )
                 lines.append("   >>> REPEATED WARNING CASCADE SUPPRESSED <<<")
 
             lines.append(
-                f"   [STEP {idx} TIMING] CPU: {elapsed_cum*1.8:.1f}s | Wall: {elapsed_cum:.1f}s | Mem: {mem_cum:.1f}MB"
+                f"   [STEP {idx} TIMING] CPU: {elapsed_cum * 1.8:.1f}s | Wall: {elapsed_cum:.1f}s | Mem: {mem_cum:.1f}MB"
             )
             lines.append(f">> [STEP {idx}/{total_steps}] FINISHED: {step_name}")
             lines.append("")
@@ -369,7 +375,9 @@ class SyntheticDataGenerator:
         lines.append(f"Design Name             : {job.design_name}")
         lines.append(f"Gate Count              : {job.design_size}")
         lines.append(f"Stage                   : {job.stage}")
-        lines.append(f"Execution Status        : {'COMPLETED' if job.status == 'completed' else 'FAILED'}")
+        lines.append(
+            f"Execution Status        : {'COMPLETED' if job.status == 'completed' else 'FAILED'}"
+        )
         if job.status == "failed":
             lines.append(f"Primary Failure Code    : {job.failure_cause.upper()}")
         lines.append(f"Total Wallclock Time    : {job.runtime_s:.2f} s")
@@ -419,9 +427,7 @@ class SyntheticDataGenerator:
             )
 
         elif cause == "missing_library":
-            cell = self.rng.choice(
-                ["INV_X4_LVT", "DFF_X2_RVT", "NAND2_X8_HVT", "SRAM_2P_512x64"]
-            )
+            cell = self.rng.choice(["INV_X4_LVT", "DFF_X2_RVT", "NAND2_X8_HVT", "SRAM_2P_512x64"])
             evidence.append(
                 f"ERROR: [LIB-204] Cannot resolve target technology cell '{cell}' in loaded technology library."
             )
