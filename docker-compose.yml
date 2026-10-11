@@ -1,0 +1,27 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: flowinsight-api:latest
+    container_name: flowinsight_api
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - FLOWINSIGHT_DB_PATH=/app/data/flowinsight.db
+      - FLOWINSIGHT_MODELS_DIR=/app/models_saved
+      - ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
+    volumes:
+      - flowinsight_data:/app/data
+      - flowinsight_models:/app/models_saved
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  flowinsight_data:
+  flowinsight_models:

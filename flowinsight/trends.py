@@ -16,7 +16,7 @@ def calculate_weekly_failure_rate(df: pd.DataFrame) -> List[Dict[str, Any]]:
     """Compute weekly failure rate partitioned chronologically."""
     df_work = df.copy()
     if not pd.api.types.is_datetime64_any_dtype(df_work["start_time"]):
-        df_work["start_time"] = pd.to_datetime(df_work["start_time"])
+        df_work["start_time"] = pd.to_datetime(df_work["start_time"], format="ISO8601")
 
     df_work["week"] = df_work["start_time"].dt.strftime("%Y-W%U")
     grouped = df_work.groupby("week")
@@ -121,7 +121,7 @@ def detect_change_point_alerts(
     """Detect abrupt regression spikes or failure surges using rolling z-score control charting."""
     df_work = df.copy()
     if not pd.api.types.is_datetime64_any_dtype(df_work["start_time"]):
-        df_work["start_time"] = pd.to_datetime(df_work["start_time"])
+        df_work["start_time"] = pd.to_datetime(df_work["start_time"], format="ISO8601")
 
     df_sorted = df_work.sort_values("start_time").reset_index(drop=True)
     df_sorted["is_failed_num"] = (df_sorted["status"] == "failed").astype(float)
